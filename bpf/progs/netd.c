@@ -666,7 +666,8 @@ procedure bool should_block_loopback_access(const SkbIpPacketData *const packet_
 
 procedure bool should_block_loopback_access_cached(const SkbIpPacketData *const packet_data,
                                             struct __sk_buff *const skb,
-                                            const uint32_t sender_uid) {
+                                            const uint32_t sender_uid,
+                                            const struct kver_uint kver) {
     bool checks_enabled = loopback_checks_enabled();
     bool metrics_enabled = loopback_metrics_enabled();
     if (!checks_enabled && !metrics_enabled) return false;
@@ -675,6 +676,14 @@ procedure bool should_block_loopback_access_cached(const SkbIpPacketData *const 
     if (packet_data->ip_proto == IPPROTO_TCP
         && !(packet_data->tcp_flags & TCP_FLAG8_SYN)) return false;
     // Remaining TCP will only trigger on SYN to avoid redundant lookups for established connections
+
+    // skb->sk and bpf_sk_storage_get() on a cgroup_skb program need 5.10;
+    // below that skip the per-socket cache, exactly as the local network
+    // cache above does.
+    if (!KVER_IS_AT_LEAST(kver, 5, 10)) {
+        return should_block_loopback_access(packet_data, skb, sender_uid,
+                                            checks_enabled, metrics_enabled);
+    }
 
     struct bpf_sock* sk = skb->sk;
     if (!sk) return should_block_loopback_access(packet_data, skb, sender_uid,
@@ -908,7 +917,7 @@ function int bpf_traffic_account(struct __sk_buff* skb,
 
     if (API_IS_AT_LEAST(lvl, 25Q4) && parsed && (match != DROP) && egress.egress
         && skb->ifindex == 1) {
-        if (should_block_loopback_access_cached(&packet_data, skb, sock_uid)) {
+        if (should_block_loopback_access_cached(&packet_data, skb, sock_uid, kver)) {
             match = DROP;
         }
     }
@@ -960,7 +969,7 @@ function int bpf_traffic_account(struct __sk_buff* skb,
 //
 //      | 4.9 | 4.14 | 4.19 | 5.4 | 5.10 | 5.15 | 6.1 | 6.6 | 6.12 | 6.18 |
 // 26Q4 |     |      |      |     |      |  x   |  x  |  x  |  x   |  x   |
-// 26Q2 |     |      |      |     |  x   |  x   |  x  |  x  |  x   |  x   |
+// 26Q2 |     |      |      | (x) |  x   |  x   |  x  |  x  |  x   |  x   |  (x): not AOSP, see the 5.4 stats variants
 // 25Q4 |     |      |      |     |  x   |  x   |  x  |  x  |  x   |
 // 25Q2 |     |      |      |  x  |  x   |  x   |  x  |  x  |  x   |
 //    V |     |      |  x   |  x  |  x   |  x   |  x  |  x  |      | (netbpfload)
@@ -987,6 +996,15 @@ DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 6_1, 6_18, 26Q2, MAXAPI)
 DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_10, 6_1, 26Q2, MAXAPI)
 (struct __sk_buff* skb) {
     return bpf_traffic_account(skb, INGRESS, KVER_5_10, API(26Q2));
+}
+
+// Android 26Q2+ 5.4 (localnet protection + uncached loopback protection).
+// Not an upstream-supported combination: AOSP requires 5.10 from 25Q4 on.
+// Kept for devices upgrading on a 5.4 kernel, in line with the NetBpfLoad
+// relaxation of the 5.10 requirement.
+DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_4, 5_10, 26Q2, MAXAPI)
+(struct __sk_buff* skb) {
+    return bpf_traffic_account(skb, INGRESS, KVER_5_4, API(26Q2));
 }
 
 // Android 25Q4/26Q1 (full featured)
@@ -1043,6 +1061,15 @@ DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 6_1, INF, 26Q2, MAXAPI)
 DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_10, 6_1, 26Q2, MAXAPI)
 (struct __sk_buff* skb) {
     return bpf_traffic_account(skb, EGRESS, KVER_5_10, API(26Q2));
+}
+
+// Android 26Q2+ 5.4 (localnet protection + uncached loopback protection).
+// Not an upstream-supported combination: AOSP requires 5.10 from 25Q4 on.
+// Kept for devices upgrading on a 5.4 kernel, in line with the NetBpfLoad
+// relaxation of the 5.10 requirement.
+DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_4, 5_10, 26Q2, MAXAPI)
+(struct __sk_buff* skb) {
+    return bpf_traffic_account(skb, EGRESS, KVER_5_4, API(26Q2));
 }
 
 // Android 25Q4/26Q1 (full featured)
