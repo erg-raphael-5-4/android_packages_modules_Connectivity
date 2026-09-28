@@ -18,6 +18,7 @@
 #include "libeventpolling/LoopbackEventHandler.h"
 
 #include <memory>
+#include <unistd.h>
 
 #include <bpf/BpfRingbuf.h>
 #include <bpf/BpfUtils.h>
@@ -53,6 +54,13 @@ bpf::RingbufEventPoller<LoopbackAccessEvent> *
 LoopbackEventHandler::GetPoller() {
     static bpf::RingbufEventPoller<LoopbackAccessEvent> *const sPoller =
         []() -> bpf::RingbufEventPoller<LoopbackAccessEvent> * {
+        // The BpfRingbuf constructor aborts if the map is missing, and the
+        // BPF loader only creates ring buffers on kernel 5.10+.
+        if (access(LOOPBACK_ACCESS_RINGBUF_NETD_PATH, F_OK) != 0) {
+            ALOGW("%s not present, loopback events disabled",
+                  LOOPBACK_ACCESS_RINGBUF_NETD_PATH);
+            return nullptr;
+        }
         auto rb = std::make_unique<BpfRingbuf<LoopbackAccessEvent>>(
             LOOPBACK_ACCESS_RINGBUF_NETD_PATH);
 

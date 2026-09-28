@@ -98,6 +98,12 @@ public class LocalNetEventListener {
         if (mStarted) {
             return;
         }
+        if (mRingbufFd == null) {
+            // No ring buffer (kernel older than 5.10): nothing to listen to.
+            Log.w(TAG, "Local network event ring buffer unavailable, not listening.");
+            mStarted = true;
+            return;
+        }
         if (mMetricsEnabled || mNoteOpsEnabled) {
             mLooper.getQueue().addOnFileDescriptorEventListener(mRingbufFd,
                     EVENT_INPUT | EVENT_ERROR, this::consumeEvents);

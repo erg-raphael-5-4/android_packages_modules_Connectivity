@@ -18,6 +18,7 @@
 #include "libeventpolling/LocalNetEventHandler.h"
 
 #include <memory>
+#include <unistd.h>
 #include <vector>
 
 #include <bpf/BpfRingbuf.h>
@@ -36,6 +37,13 @@ using bpf::RingbufEventPoller;
 LocalNetEventHandler::LocalNetEventRingbuf *LocalNetEventHandler::GetRingbuf() {
     static LocalNetEventRingbuf *const sRingbuf =
         []() -> LocalNetEventRingbuf * {
+        // The BpfRingbuf constructor aborts if the map is missing, and the
+        // BPF loader only creates ring buffers on kernel 5.10+.
+        if (access(LOCAL_NET_NOTE_OP_RINGBUF_PATH, F_OK) != 0) {
+            ALOGW("%s not present, local network events disabled",
+                  LOCAL_NET_NOTE_OP_RINGBUF_PATH);
+            return nullptr;
+        }
         auto rb = std::make_unique<LocalNetEventRingbuf>(
             LOCAL_NET_NOTE_OP_RINGBUF_PATH);
         return rb.release();
@@ -46,8 +54,10 @@ LocalNetEventHandler::LocalNetEventRingbuf *LocalNetEventHandler::GetRingbuf() {
 // static
 std::vector<uint32_t> LocalNetEventHandler::ConsumeAll() {
     std::vector<uint32_t> uids_pids;
+    LocalNetEventRingbuf *rb = GetRingbuf();
+    if (!rb) return {};
     base::Result<int> ret =
-        GetRingbuf()->ConsumeAll([&](const LocalNetNoteOp &event) {
+        rb->ConsumeAll([&](const LocalNetNoteOp &event) {
             uids_pids.push_back(event.uid);
             uids_pids.push_back(event.pid);
         });
