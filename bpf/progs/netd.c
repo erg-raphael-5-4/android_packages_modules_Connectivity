@@ -677,13 +677,11 @@ procedure bool should_block_loopback_access_cached(const SkbIpPacketData *const 
         && !(packet_data->tcp_flags & TCP_FLAG8_SYN)) return false;
     // Remaining TCP will only trigger on SYN to avoid redundant lookups for established connections
 
-    // skb->sk and bpf_sk_storage_get() on a cgroup_skb program need 5.10;
-    // below that skip the per-socket cache, exactly as the local network
-    // cache above does.
-    if (!KVER_IS_AT_LEAST(kver, 5, 10)) {
-        return should_block_loopback_access(packet_data, skb, sender_uid,
-                                            checks_enabled, metrics_enabled);
-    }
+    // The loopback check resolves the receiving socket's uid through the
+    // sk_storage map, which NetBpfLoad only creates on 5.10+. Below that the
+    // program would reference a map that doesn't exist and fail to load, so
+    // skip the check entirely (same behaviour as before 26Q2).
+    if (!KVER_IS_AT_LEAST(kver, 5, 10)) return false;
 
     struct bpf_sock* sk = skb->sk;
     if (!sk) return should_block_loopback_access(packet_data, skb, sender_uid,
